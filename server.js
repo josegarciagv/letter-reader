@@ -35,6 +35,7 @@ const stripeClient = stripe(process.env.STRIPE_SECRET_KEY)
 const MONGO_URL =
   process.env.MONGO_URL || process.env.MONGODB_URI || process.env.MONGODB_URL
 
+
 // Stripe webhook must be registered before body parsers so that we can access
 // the raw request body for signature verification.
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
@@ -60,11 +61,15 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
       const userId = generateUserId(email)
       await db
         .collection("users")
+
         .updateOne(
           { userId },
           { $inc: { tokens: Number.parseInt(tokens) } },
           { upsert: true },
         )
+
+        .updateOne({ userId }, { $inc: { tokens: Number.parseInt(tokens) } })
+
 
       // Log the purchase
       await db.collection("purchases").insertOne({
@@ -84,6 +89,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 
   res.json({ received: true })
 })
+
 
 // Middleware
 app.use(express.json({ limit: "50mb" }))
@@ -564,6 +570,7 @@ app.post("/api/create-payment", async (req, res) => {
   }
 })
 
+
 // Fallback endpoint to confirm a payment session in case the webhook fails
 app.get("/api/check-payment", async (req, res) => {
   const sessionId = req.query.session_id
@@ -613,6 +620,7 @@ app.get("/api/check-payment", async (req, res) => {
     res.status(500).json({ error: "Failed to verify payment" })
   }
 })
+
 
 
 // Health check

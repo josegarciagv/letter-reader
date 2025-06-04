@@ -14,12 +14,19 @@ set the following variables in your project settings:
 - `DOMAIN` – Base URL for the frontend (used in payment redirects).
 - `MONGO_URL` or `MONGODB_URI` – MongoDB connection string.
 
+
 Configure your Stripe dashboard to send events to `<your-domain>/webhook`. The
 client also verifies the payment on page load using `/api/check-payment` as a
 fallback in case the webhook fails.
 
 A local `.env` file can also be used for development. If the file does not exist,
 `server.js` will fall back to using the variables provided by the environment.
+
+
+A local `.env` file can also be used for development. If the file does not exist,
+`server.js` will fall back to using the variables provided by the environment.
+
+
 
 ## Token Pricing
 
@@ -30,3 +37,4 @@ A local `.env` file can also be used for development. If the file does not exist
 | 25 tokens | $9.99 | $0.40 | usuarios frecuentes |
 | 50 tokens | $17.99 | $0.36 | negocios pequeños |
 | 100 tokens | $29.99 | $0.30 | uso intensivo / oficinas |
+
