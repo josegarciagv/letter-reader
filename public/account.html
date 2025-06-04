@@ -581,6 +581,8 @@
       document.addEventListener("DOMContentLoaded", function () {
         const urlParams = new URLSearchParams(window.location.search);
         const email = urlParams.get("email");
+        const sessionId = urlParams.get("session_id");
+        const paymentStatus = urlParams.get("payment");
 
         if (!email) {
           window.location.href = "/";
@@ -588,6 +590,9 @@
         }
 
         currentUser = { email: email };
+        if (paymentStatus === "success" && sessionId) {
+          confirmPayment(sessionId);
+        }
         loadUserData();
         loadLetters();
       });
@@ -879,6 +884,27 @@
         } catch (error) {
           showError("Failed to process payment: " + error.message);
           console.error("Payment error:", error);
+        }
+      }
+
+      async function confirmPayment(sessionId) {
+        try {
+          const response = await fetch(
+            `/api/check-payment?session_id=${encodeURIComponent(sessionId)}`,
+          );
+          const result = await response.json();
+
+          if (response.ok) {
+            if (result.updated) {
+              showSuccess("Payment confirmed. Tokens added to your account.");
+            }
+            loadUserData();
+          } else {
+            showError(result.error || "Failed to verify payment");
+          }
+        } catch (error) {
+          console.error("Confirm payment error:", error);
+          showError("Error confirming payment");
         }
       }
 
