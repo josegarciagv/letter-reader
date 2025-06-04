@@ -35,6 +35,54 @@ const stripeClient = stripe(process.env.STRIPE_SECRET_KEY)
 const MONGO_URL =
   process.env.MONGO_URL || process.env.MONGODB_URI || process.env.MONGODB_URL
 
+
+// Stripe webhook must be registered before body parsers so that we can access
+// the raw request body for signature verification.
+app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"]
+  let event
+
+  try {
+    event = stripeClient.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET,
+    )
+  } catch (err) {
+    console.error("Webhook signature verification failed:", err.message)
+    return res.status(400).send(`Webhook Error: ${err.message}`)
+  }
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object
+    const { email, tokens } = session.metadata
+
+    try {
+      const userId = generateUserId(email)
+      await db
+        .collection("users")
+        .updateOne({ userId }, { $inc: { tokens: Number.parseInt(tokens) } })
+
+      // Log the purchase
+      await db.collection("purchases").insertOne({
+        userId,
+        email,
+        tokens: Number.parseInt(tokens),
+        amount: session.amount_total / 100,
+        sessionId: session.id,
+        createdAt: new Date(),
+      })
+
+      console.log(`Added ${tokens} tokens to user ${email}`)
+    } catch (error) {
+      console.error("Error processing payment webhook:", error)
+    }
+  }
+
+  res.json({ received: true })
+})
+
+
 // Middleware
 app.use(express.json({ limit: "50mb" }))
 app.use(express.static("public"))
@@ -512,44 +560,6 @@ app.post("/api/create-payment", async (req, res) => {
   }
 })
 
-// Stripe webhook
-app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  const sig = req.headers["stripe-signature"]
-  let event
-
-  try {
-    event = stripeClient.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET)
-  } catch (err) {
-    console.error("Webhook signature verification failed:", err.message)
-    return res.status(400).send(`Webhook Error: ${err.message}`)
-  }
-
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object
-    const { email, tokens } = session.metadata
-
-    try {
-      const userId = generateUserId(email)
-      await db.collection("users").updateOne({ userId }, { $inc: { tokens: Number.parseInt(tokens) } })
-
-      // Log the purchase
-      await db.collection("purchases").insertOne({
-        userId,
-        email,
-        tokens: Number.parseInt(tokens),
-        amount: session.amount_total / 100,
-        sessionId: session.id,
-        createdAt: new Date(),
-      })
-
-      console.log(`Added ${tokens} tokens to user ${email}`)
-    } catch (error) {
-      console.error("Error processing payment webhook:", error)
-    }
-  }
-
-  res.json({ received: true })
-})
 
 // Health check
 app.get("/health", (req, res) => {
