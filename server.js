@@ -10,7 +10,14 @@ const crypto = require("crypto")
 const pdf = require("pdf-parse")
 const sharp = require("sharp")
 const Tesseract = require("tesseract.js")
-require("dotenv").config()
+
+// Load environment variables from .env if present. When running on
+// platforms like Railway the variables are provided via process.env and
+// a local .env file may not exist.
+const dotenvResult = require("dotenv").config()
+if (dotenvResult.error) {
+  console.warn("No .env file found, relying on process environment variables")
+}
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -21,6 +28,62 @@ const openai = new OpenAI({
 })
 
 const stripeClient = stripe(process.env.STRIPE_SECRET_KEY)
+
+// Support different environment variable names for the MongoDB connection.
+// Railway typically provides `MONGODB_URI` for its Mongo plugin. If `MONGO_URL`
+// is not defined we fall back to these alternatives.
+const MONGO_URL =
+  process.env.MONGO_URL || process.env.MONGODB_URI || process.env.MONGODB_URL
+
+// Stripe webhook must be registered before body parsers so that we can access
+// the raw request body for signature verification.
+app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"]
+  let event
+
+  try {
+    event = stripeClient.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET,
+    )
+  } catch (err) {
+    console.error("Webhook signature verification failed:", err.message)
+    return res.status(400).send(`Webhook Error: ${err.message}`)
+  }
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object
+    const { email, tokens } = session.metadata
+
+    try {
+      const userId = generateUserId(email)
+      await db
+        .collection("users")
+        .updateOne(
+          { userId },
+          { $inc: { tokens: Number.parseInt(tokens) } },
+          { upsert: true },
+        )
+
+      // Log the purchase
+      await db.collection("purchases").insertOne({
+        userId,
+        email,
+        tokens: Number.parseInt(tokens),
+        amount: session.amount_total / 100,
+        sessionId: session.id,
+        createdAt: new Date(),
+      })
+
+      console.log(`Added ${tokens} tokens to user ${email}`)
+    } catch (error) {
+      console.error("Error processing payment webhook:", error)
+    }
+  }
+
+  res.json({ received: true })
+})
 
 // Middleware
 app.use(express.json({ limit: "50mb" }))
@@ -41,7 +104,7 @@ app.use((req, res, next) => {
 
 // MongoDB connection
 let db
-MongoClient.connect(process.env.MONGO_URL)
+MongoClient.connect(MONGO_URL)
   .then((client) => {
     console.log("Connected to MongoDB")
     db = client.db("letterreader")
@@ -466,7 +529,7 @@ app.delete("/api/letter/:id", async (req, res) => {
 // Create payment session
 app.post("/api/create-payment", async (req, res) => {
   try {
-    const { email, tokens, amount } = req.body
+  const { email, tokens, amount } = req.body
 
     const session = await stripeClient.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -484,8 +547,10 @@ app.post("/api/create-payment", async (req, res) => {
         },
       ],
       mode: "payment",
-      success_url: `${process.env.DOMAIN}/account.html?email=${encodeURIComponent(email)}&payment=success`,
-      cancel_url: `${process.env.DOMAIN}/account.html?email=${encodeURIComponent(email)}&payment=cancelled`,
+      success_url:
+        `${process.env.DOMAIN}/account.html?payment=success&email=${encodeURIComponent(email)}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url:
+        `${process.env.DOMAIN}/account.html?payment=cancelled&email=${encodeURIComponent(email)}`,
       metadata: {
         email,
         tokens: tokens.toString(),
@@ -499,44 +564,56 @@ app.post("/api/create-payment", async (req, res) => {
   }
 })
 
-// Stripe webhook
-app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  const sig = req.headers["stripe-signature"]
-  let event
+// Fallback endpoint to confirm a payment session in case the webhook fails
+app.get("/api/check-payment", async (req, res) => {
+  const sessionId = req.query.session_id
+
+  if (!sessionId) {
+    return res.status(400).json({ error: "Missing session_id" })
+  }
 
   try {
-    event = stripeClient.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET)
-  } catch (err) {
-    console.error("Webhook signature verification failed:", err.message)
-    return res.status(400).send(`Webhook Error: ${err.message}`)
-  }
+    const session = await stripeClient.checkout.sessions.retrieve(sessionId)
 
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object
+    if (session.payment_status !== "paid") {
+      return res.status(400).json({ error: "Session not paid" })
+    }
+
     const { email, tokens } = session.metadata
 
-    try {
-      const userId = generateUserId(email)
-      await db.collection("users").updateOne({ userId }, { $inc: { tokens: Number.parseInt(tokens) } })
-
-      // Log the purchase
-      await db.collection("purchases").insertOne({
-        userId,
-        email,
-        tokens: Number.parseInt(tokens),
-        amount: session.amount_total / 100,
-        sessionId: session.id,
-        createdAt: new Date(),
-      })
-
-      console.log(`Added ${tokens} tokens to user ${email}`)
-    } catch (error) {
-      console.error("Error processing payment webhook:", error)
+    // If we've already processed this purchase, skip updating
+    const existing = await db
+      .collection("purchases")
+      .findOne({ sessionId: session.id })
+    if (existing) {
+      return res.json({ updated: false })
     }
-  }
 
-  res.json({ received: true })
+    const userId = generateUserId(email)
+    await db
+      .collection("users")
+      .updateOne(
+        { userId },
+        { $inc: { tokens: Number.parseInt(tokens) } },
+        { upsert: true },
+      )
+
+    await db.collection("purchases").insertOne({
+      userId,
+      email,
+      tokens: Number.parseInt(tokens),
+      amount: session.amount_total / 100,
+      sessionId: session.id,
+      createdAt: new Date(),
+    })
+
+    res.json({ updated: true, tokens: Number.parseInt(tokens) })
+  } catch (error) {
+    console.error("Check payment error:", error)
+    res.status(500).json({ error: "Failed to verify payment" })
+  }
 })
+
 
 // Health check
 app.get("/health", (req, res) => {
