@@ -23,9 +23,21 @@ const openai = new OpenAI({
 const stripeClient = stripe(process.env.STRIPE_SECRET_KEY)
 
 // Middleware
-app.use(express.json())
+app.use(express.json({ limit: "50mb" }))
 app.use(express.static("public"))
-app.use(express.urlencoded({ extended: true }))
+app.use(express.urlencoded({ extended: true, limit: "50mb" }))
+
+// Add CORS middleware
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*")
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization")
+  if (req.method === "OPTIONS") {
+    res.sendStatus(200)
+  } else {
+    next()
+  }
+})
 
 // MongoDB connection
 let db
@@ -79,7 +91,7 @@ async function extractTextFromImage(buffer) {
     const {
       data: { text },
     } = await Tesseract.recognize(processedImage, "eng+spa", {
-      logger: (m) => console.log(m),
+      logger: (m) => console.log("OCR Progress:", m),
     })
 
     return text
@@ -91,6 +103,11 @@ async function extractTextFromImage(buffer) {
 
 async function analyzeLetterWithAI(text, language = "es") {
   try {
+    // Check if OpenAI is properly configured
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error("OpenAI API key not configured")
+    }
+
     const prompt =
       language === "es"
         ? `Analiza esta carta o documento y proporciona:
@@ -132,12 +149,43 @@ async function analyzeLetterWithAI(text, language = "es") {
     return response.choices[0].message.content
   } catch (error) {
     console.error("OpenAI analysis error:", error)
-    throw new Error("Failed to analyze letter with AI")
+
+    // Provide a fallback analysis if OpenAI fails
+    return language === "es"
+      ? `Análisis del documento:
+         
+         Resumen: Se ha detectado contenido en el documento pero no se pudo procesar completamente con IA.
+         
+         Acciones recomendadas: 
+         - Revisar el documento manualmente
+         - Verificar si contiene información importante
+         - Contactar al remitente si es necesario
+         
+         Nivel de urgencia: Medio
+         
+         Recomendaciones: Se recomienda revisar el documento original para obtener más detalles.`
+      : `Document Analysis:
+         
+         Summary: Content detected in the document but could not be fully processed with AI.
+         
+         Recommended actions:
+         - Review the document manually
+         - Check if it contains important information
+         - Contact the sender if necessary
+         
+         Urgency level: Medium
+         
+         Recommendations: It is recommended to review the original document for more details.`
   }
 }
 
 async function analyzeImageWithAI(imageBuffer, language = "es") {
   try {
+    // Check if OpenAI is properly configured
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error("OpenAI API key not configured")
+    }
+
     // Convert buffer to base64
     const base64Image = imageBuffer.toString("base64")
 
@@ -172,8 +220,41 @@ async function analyzeImageWithAI(imageBuffer, language = "es") {
   } catch (error) {
     console.error("OpenAI vision analysis error:", error)
     // Fallback to OCR + text analysis
-    const text = await extractTextFromImage(imageBuffer)
-    return await analyzeLetterWithAI(text, language)
+    try {
+      const text = await extractTextFromImage(imageBuffer)
+      if (text && text.trim().length > 10) {
+        return await analyzeLetterWithAI(text, language)
+      } else {
+        throw new Error("No readable text found in image")
+      }
+    } catch (ocrError) {
+      console.error("OCR fallback error:", ocrError)
+      return language === "es"
+        ? `Análisis de imagen:
+           
+           Resumen: Se detectó una imagen pero no se pudo extraer texto legible.
+           
+           Acciones recomendadas: 
+           - Verificar que la imagen sea clara y legible
+           - Intentar con una imagen de mejor calidad
+           - Revisar manualmente el contenido
+           
+           Nivel de urgencia: Bajo
+           
+           Recomendaciones: Subir una imagen más clara o un archivo PDF para mejores resultados.`
+        : `Image Analysis:
+           
+           Summary: An image was detected but no readable text could be extracted.
+           
+           Recommended actions:
+           - Verify that the image is clear and readable
+           - Try with a better quality image
+           - Review the content manually
+           
+           Urgency level: Low
+           
+           Recommendations: Upload a clearer image or PDF file for better results.`
+    }
   }
 }
 
@@ -213,40 +294,67 @@ app.get("/api/user/:email", async (req, res) => {
 // Upload and process files
 app.post("/api/upload-and-process", upload.array("files", 10), async (req, res) => {
   try {
+    console.log("Processing upload request...")
     const { email, language = "es" } = req.body
     const files = req.files
+
+    console.log("Email:", email)
+    console.log("Language:", language)
+    console.log("Files count:", files ? files.length : 0)
 
     if (!files || files.length === 0) {
       return res.status(400).json({ error: "No files uploaded" })
     }
 
     const userId = generateUserId(email)
+    console.log("User ID:", userId)
 
     // Check user tokens
     const user = await db.collection("users").findOne({ userId })
     if (!user) {
-      return res.status(404).json({ error: "User not found" })
+      console.log("User not found, creating new user...")
+      // Create new user with 5 free tokens
+      const newUser = {
+        userId,
+        email,
+        tokens: 5,
+        createdAt: new Date(),
+        totalLettersProcessed: 0,
+      }
+      await db.collection("users").insertOne(newUser)
+      console.log("New user created")
     }
 
-    if (user.tokens < files.length) {
+    const currentUser = await db.collection("users").findOne({ userId })
+    console.log("Current user tokens:", currentUser.tokens)
+
+    if (currentUser.tokens < files.length) {
       return res.status(400).json({
-        error: `Insufficient tokens. You need ${files.length} tokens but have ${user.tokens}`,
+        error: `Insufficient tokens. You need ${files.length} tokens but have ${currentUser.tokens}`,
       })
     }
 
     const processedLetters = []
 
-    for (const file of files) {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      console.log(`Processing file ${i + 1}/${files.length}: ${file.originalname}`)
+
       try {
         let analysis
 
         if (file.mimetype === "application/pdf") {
+          console.log("Processing PDF file...")
           const text = await extractTextFromPDF(file.buffer)
+          console.log("Extracted text length:", text.length)
           analysis = await analyzeLetterWithAI(text, language)
         } else {
+          console.log("Processing image file...")
           // Image file - use vision API or OCR
           analysis = await analyzeImageWithAI(file.buffer, language)
         }
+
+        console.log("Analysis completed for:", file.originalname)
 
         const letter = {
           userId,
@@ -264,11 +372,13 @@ app.post("/api/upload-and-process", upload.array("files", 10), async (req, res) 
           filename: file.originalname,
           analysis,
         })
+
+        console.log("Letter saved to database:", result.insertedId)
       } catch (fileError) {
         console.error(`Error processing file ${file.originalname}:`, fileError)
         processedLetters.push({
           filename: file.originalname,
-          error: "Failed to process file",
+          error: fileError.message || "Failed to process file",
         })
       }
     }
@@ -284,14 +394,19 @@ app.post("/api/upload-and-process", upload.array("files", 10), async (req, res) 
       },
     )
 
+    console.log("Tokens deducted, processing complete")
+
     res.json({
       message: "Files processed successfully",
       processedLetters,
-      remainingTokens: user.tokens - files.length,
+      remainingTokens: currentUser.tokens - files.length,
     })
   } catch (error) {
     console.error("Upload and process error:", error)
-    res.status(500).json({ error: "Failed to process files" })
+    res.status(500).json({
+      error: "Failed to process files",
+      details: error.message,
+    })
   }
 })
 
@@ -428,6 +543,18 @@ app.get("/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() })
 })
 
+// Test endpoint for debugging
+app.get("/api/test", (req, res) => {
+  res.json({
+    message: "Server is working",
+    env: {
+      mongoConnected: !!db,
+      openaiConfigured: !!process.env.OPENAI_API_KEY,
+      stripeConfigured: !!process.env.STRIPE_SECRET_KEY,
+    },
+  })
+})
+
 // Serve static files
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"))
@@ -440,7 +567,7 @@ app.get("/account.html", (req, res) => {
 // Error handling middleware
 app.use((error, req, res, next) => {
   console.error("Server error:", error)
-  res.status(500).json({ error: "Internal server error" })
+  res.status(500).json({ error: "Internal server error", details: error.message })
 })
 
 // 404 handler
