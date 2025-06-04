@@ -35,6 +35,7 @@ const stripeClient = stripe(process.env.STRIPE_SECRET_KEY)
 const MONGO_URL =
   process.env.MONGO_URL || process.env.MONGODB_URI || process.env.MONGODB_URL
 
+
 // Stripe webhook must be registered before body parsers so that we can access
 // the raw request body for signature verification.
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
@@ -80,6 +81,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 
   res.json({ received: true })
 })
+
 
 // Middleware
 app.use(express.json({ limit: "50mb" }))
