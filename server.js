@@ -34,10 +34,6 @@ const SESSION_EXPIRY_HOURS = 24
 
 
 
-const SESSION_EXPIRY_HOURS = 24
-
-
-
 // Support different environment variable names for the MongoDB connection.
 // Railway typically provides `MONGODB_URI` for its Mongo plugin. If `MONGO_URL`
 // is not defined we fall back to these alternatives.
