@@ -689,6 +689,19 @@
         showLoading(true);
 
         try {
+          const sessionRes = await fetch("/api/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: currentEmail }),
+          });
+
+          if (!sessionRes.ok) {
+            throw new Error("Failed to start session");
+          }
+
+          const { token } = await sessionRes.json();
+          localStorage.setItem("accessToken", token);
+
           // Upload files and process
           const formData = new FormData();
           selectedFiles.forEach((file) => {
@@ -699,6 +712,7 @@
 
           const response = await fetch("/api/upload-and-process", {
             method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
             body: formData,
           });
 
@@ -770,9 +784,21 @@
               "Enter the 6-digit code sent to your email:"
             );
             if (loginCode === verificationCode) {
-              window.location.href = `/account.html?email=${encodeURIComponent(
-                currentEmail
-              )}`;
+              const sessionRes = await fetch("/api/session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: currentEmail }),
+              });
+
+              if (sessionRes.ok) {
+                const { token } = await sessionRes.json();
+                localStorage.setItem("accessToken", token);
+                window.location.href = `/account.html?email=${encodeURIComponent(
+                  currentEmail
+                )}`;
+              } else {
+                alert("Failed to create session");
+              }
             } else {
               alert("Invalid code. Please try again.");
             }
