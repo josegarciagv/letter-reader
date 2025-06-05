@@ -29,10 +29,7 @@ const openai = new OpenAI({
 
 const stripeClient = stripe(process.env.STRIPE_SECRET_KEY)
 
-
 const SESSION_EXPIRY_HOURS = 24
-
-
 
 // Support different environment variable names for the MongoDB connection.
 // Railway typically provides `MONGODB_URI` for its Mongo plugin. If `MONGO_URL`
@@ -40,6 +37,17 @@ const SESSION_EXPIRY_HOURS = 24
 const MONGO_URL =
   process.env.MONGO_URL || process.env.MONGODB_URI || process.env.MONGODB_URL
 
+// MongoDB connection
+let db
+MongoClient.connect(MONGO_URL)
+  .then((client) => {
+    console.log("Connected to MongoDB")
+    db = client.db("letterreader")
+  })
+  .catch((error) => {
+    console.error("MongoDB connection error:", error)
+    process.exit(1)
+  })
 
 // Stripe webhook must be registered before body parsers so that we can access
 // the raw request body for signature verification.
@@ -66,19 +74,11 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
       const userId = generateUserId(email)
       await db
         .collection("users")
-
         .updateOne(
           { userId },
           { $inc: { tokens: Number.parseInt(tokens) } },
           { upsert: true },
         )
-
-
-
-        .updateOne({ userId }, { $inc: { tokens: Number.parseInt(tokens) } })
-
-
-
 
       // Log the purchase
       await db.collection("purchases").insertOne({
@@ -99,7 +99,6 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   res.json({ received: true })
 })
 
-
 // Middleware
 app.use(express.json({ limit: "50mb" }))
 app.use(express.static("public"))
@@ -116,18 +115,6 @@ app.use((req, res, next) => {
     next()
   }
 })
-
-// MongoDB connection
-let db
-MongoClient.connect(MONGO_URL)
-  .then((client) => {
-    console.log("Connected to MongoDB")
-    db = client.db("letterreader")
-  })
-  .catch((error) => {
-    console.error("MongoDB connection error:", error)
-    process.exit(1)
-  })
 
 // Multer configuration for file uploads
 const storage = multer.memoryStorage()
@@ -336,29 +323,6 @@ async function analyzeImageWithAI(imageBuffer, language = "es") {
   }
 }
 
-// Routes
-
-// Create login session
-app.post("/api/session", async (req, res) => {
-  const { email } = req.body
-  if (!email) {
-    return res.status(400).json({ error: "Email required" })
-  }
-
-  try {
-    const token = crypto.randomBytes(24).toString("hex")
-    await db.collection("sessions").insertOne({
-      email,
-      token,
-      createdAt: new Date(),
-    })
-    res.json({ token })
-  } catch (error) {
-    console.error("Create session error:", error)
-    res.status(500).json({ error: "Failed to create session" })
-  }
-})
-
 // Authentication middleware
 async function authenticate(req, res, next) {
   const auth = req.headers.authorization || ""
@@ -388,8 +352,31 @@ async function authenticate(req, res, next) {
   }
 }
 
+// Routes
+
+// Create login session
+app.post("/api/session", async (req, res) => {
+  const { email } = req.body
+  if (!email) {
+    return res.status(400).json({ error: "Email required" })
+  }
+
+  try {
+    const token = crypto.randomBytes(24).toString("hex")
+    await db.collection("sessions").insertOne({
+      email,
+      token,
+      createdAt: new Date(),
+    })
+    res.json({ token })
+  } catch (error) {
+    console.error("Create session error:", error)
+    res.status(500).json({ error: "Failed to create session" })
+  }
+})
+
 // Get user data
-app.get("/api/user/:email", authenticate, async (req, res) => {
+app.get("/api/user/:email", async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email)
     const userId = generateUserId(email)
@@ -420,11 +407,7 @@ app.get("/api/user/:email", authenticate, async (req, res) => {
 })
 
 // Upload and process files
-app.post(
-  "/api/upload-and-process",
-  authenticate,
-  upload.array("files", 10),
-  async (req, res) => {
+app.post("/api/upload-and-process", upload.array("files", 10), async (req, res) => {
   try {
     console.log("Processing upload request...")
     const { email, language = "es" } = req.body
@@ -543,7 +526,7 @@ app.post(
 })
 
 // Get user letters
-app.get("/api/letters/:email", authenticate, async (req, res) => {
+app.get("/api/letters/:email", async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email)
     const userId = generateUserId(email)
@@ -558,7 +541,7 @@ app.get("/api/letters/:email", authenticate, async (req, res) => {
 })
 
 // Get specific letter
-app.get("/api/letter/:id", authenticate, async (req, res) => {
+app.get("/api/letter/:id", async (req, res) => {
   try {
     const { ObjectId } = require("mongodb")
     const letter = await db.collection("letters").findOne({
@@ -577,7 +560,7 @@ app.get("/api/letter/:id", authenticate, async (req, res) => {
 })
 
 // Delete letter
-app.delete("/api/letter/:id", authenticate, async (req, res) => {
+app.delete("/api/letter/:id", async (req, res) => {
   try {
     const { ObjectId } = require("mongodb")
     const result = await db.collection("letters").deleteOne({
@@ -596,9 +579,9 @@ app.delete("/api/letter/:id", authenticate, async (req, res) => {
 })
 
 // Create payment session
-app.post("/api/create-payment", authenticate, async (req, res) => {
+app.post("/api/create-payment", async (req, res) => {
   try {
-  const { email, tokens, amount } = req.body
+    const { email, tokens, amount } = req.body
 
     const session = await stripeClient.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -633,24 +616,9 @@ app.post("/api/create-payment", authenticate, async (req, res) => {
   }
 })
 
-
 // Fallback endpoint to confirm a payment session in case the webhook fails
 app.get("/api/check-payment", async (req, res) => {
   const sessionId = req.query.session_id
-
-
-
-// Fallback endpoint to confirm a payment session in case the webhook fails
-app.get("/api/check-payment", async (req, res) => {
-  const sessionId = req.query.session_id
-
-
-
-// Fallback endpoint to confirm a payment session in case the webhook fails
-app.get("/api/check-payment", async (req, res) => {
-  const sessionId = req.query.session_id
-
-
 
   if (!sessionId) {
     return res.status(400).json({ error: "Missing session_id" })
@@ -697,8 +665,6 @@ app.get("/api/check-payment", async (req, res) => {
     res.status(500).json({ error: "Failed to verify payment" })
   }
 })
-
-
 
 // Health check
 app.get("/health", (req, res) => {
