@@ -675,7 +675,10 @@ app.get("/api/check-payment", async (req, res) => {
     await db.collection("purchases").insertOne({
       userId,
       email,
-      tokens: Number.parseInt(tokens),
+  res.status(500).json({
+    error: "Internal server error",
+    details: error.message,
+  })
       amount: session.amount_total / 100,
       sessionId: session.id,
       createdAt: new Date(),
