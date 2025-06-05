@@ -32,6 +32,11 @@ const stripeClient = stripe(process.env.STRIPE_SECRET_KEY)
 
 const SESSION_EXPIRY_HOURS = 24
 
+=======
+
+const SESSION_EXPIRY_HOURS = 24
+
+
 
 // Support different environment variable names for the MongoDB connection.
 // Railway typically provides `MONGODB_URI` for its Mongo plugin. If `MONGO_URL`
@@ -73,7 +78,9 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         )
 
 
+
         .updateOne({ userId }, { $inc: { tokens: Number.parseInt(tokens) } })
+
 
 
 
@@ -642,6 +649,13 @@ app.get("/api/check-payment", async (req, res) => {
   const sessionId = req.query.session_id
 
 
+
+// Fallback endpoint to confirm a payment session in case the webhook fails
+app.get("/api/check-payment", async (req, res) => {
+  const sessionId = req.query.session_id
+
+
+
   if (!sessionId) {
     return res.status(400).json({ error: "Missing session_id" })
   }
@@ -719,7 +733,10 @@ app.get("/account.html", (req, res) => {
 // Error handling middleware
 app.use((error, req, res, next) => {
   console.error("Server error:", error)
-  res.status(500).json({ error: "Internal server error", details: error.message })
+  res.status(500).json({
+    error: "Internal server error",
+    details: error.message,
+  })
 })
 
 // 404 handler
