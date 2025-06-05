@@ -162,6 +162,31 @@
         background: #45a049;
       }
 
+      .selected-files {
+        margin-top: 15px;
+        text-align: left;
+      }
+
+      .file-item {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 10px 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .remove-file {
+        background: #f44336;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 5px 10px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
       .language-selector {
         margin: 20px 0;
       }
@@ -453,6 +478,7 @@
                 multiple
                 accept=".pdf,.jpg,.jpeg,.png,.gif"
               />
+              <div class="selected-files" id="selectedFiles"></div>
             </div>
 
             <div class="language-selector">
@@ -537,6 +563,7 @@
             <h3>50 Tokens</h3>
             <p style="font-size: 1.5rem; color: #4caf50; margin: 10px 0">
               $17.99
+
             </p>
             <p style="color: #888">$0.36 each</p>
           </div>
@@ -545,6 +572,16 @@
             <p style="font-size: 1.5rem; color: #4caf50; margin: 10px 0">
               $29.99
             </p>
+
+            </p>
+            <p style="color: #888">$0.36 each</p>
+          </div>
+          <div class="token-package" onclick="selectPackage(100, 29.99)">
+            <h3>100 Tokens</h3>
+            <p style="font-size: 1.5rem; color: #4caf50; margin: 10px 0">
+              $29.99
+            </p>
+
             <p style="color: #888">$0.30 each</p>
           </div>
         </div>
@@ -575,16 +612,20 @@
     <script>
       let currentUser = null;
       let selectedFiles = [];
+      const selectedFilesDiv = document.getElementById("selectedFiles");
       let selectedPackage = null;
 
       // Initialize page
       document.addEventListener("DOMContentLoaded", function () {
         const urlParams = new URLSearchParams(window.location.search);
         const email = urlParams.get("email");
+
+        const token = localStorage.getItem("accessToken");
+
         const sessionId = urlParams.get("session_id");
         const paymentStatus = urlParams.get("payment");
 
-        if (!email) {
+        if (!email || !token) {
           window.location.href = "/";
           return;
         }
@@ -623,22 +664,41 @@
       });
 
       function handleNewFiles(files) {
-        selectedFiles = files.filter(
-          (file) =>
-            file.type.includes("image/") || file.type === "application/pdf"
-        );
-
+        files.forEach((file) => {
+          if (file.type.includes("image/") || file.type === "application/pdf") {
+            selectedFiles.push(file);
+          }
+        });
+        displaySelectedFiles();
         if (selectedFiles.length > 0) {
-          showSuccess(
-            `${selectedFiles.length} file(s) selected for processing`
-          );
+          showSuccess(`${selectedFiles.length} file(s) ready for processing`);
         }
+      }
+
+      function displaySelectedFiles() {
+        selectedFilesDiv.innerHTML = "";
+        selectedFiles.forEach((file, index) => {
+          const item = document.createElement("div");
+          item.className = "file-item";
+          item.innerHTML = `
+                <span>${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+                <button class="remove-file" onclick="removeFile(${index})">Remove</button>
+            `;
+          selectedFilesDiv.appendChild(item);
+        });
+      }
+
+      function removeFile(index) {
+        selectedFiles.splice(index, 1);
+        displaySelectedFiles();
       }
 
       async function loadUserData() {
         try {
+          const token = localStorage.getItem("accessToken") || "";
           const response = await fetch(
-            `/api/user/${encodeURIComponent(currentUser.email)}`
+            `/api/user/${encodeURIComponent(currentUser.email)}`,
+            { headers: { Authorization: `Bearer ${token}` } }
           );
           const userData = await response.json();
 
@@ -655,8 +715,10 @@
 
       async function loadLetters() {
         try {
+          const token = localStorage.getItem("accessToken") || "";
           const response = await fetch(
-            `/api/letters/${encodeURIComponent(currentUser.email)}`
+            `/api/letters/${encodeURIComponent(currentUser.email)}`,
+            { headers: { Authorization: `Bearer ${token}` } }
           );
           const letters = await response.json();
 
@@ -735,8 +797,11 @@
           formData.append("email", currentUser.email);
           formData.append("language", language);
 
+          const token = localStorage.getItem("accessToken") || "";
+
           const response = await fetch("/api/upload-and-process", {
             method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
             body: formData,
           });
 
@@ -746,6 +811,7 @@
             showSuccess("Files processed successfully!");
             selectedFiles = [];
             newFileInput.value = "";
+            displaySelectedFiles();
             loadUserData();
             loadLetters();
           } else {
@@ -761,7 +827,10 @@
 
       async function viewLetter(letterId) {
         try {
-          const response = await fetch(`/api/letter/${letterId}`);
+          const token = localStorage.getItem("accessToken") || "";
+          const response = await fetch(`/api/letter/${letterId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
           const letter = await response.json();
 
           if (response.ok) {
@@ -806,8 +875,10 @@
         }
 
         try {
+          const token = localStorage.getItem("accessToken") || "";
           const response = await fetch(`/api/letter/${letterId}`, {
             method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
           });
 
           if (response.ok) {
@@ -864,9 +935,13 @@
         if (!selectedPackage) return;
 
         try {
+          const token = localStorage.getItem("accessToken") || "";
           const response = await fetch("/api/create-payment", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
             body: JSON.stringify({
               email: currentUser.email,
               tokens: selectedPackage.tokens,
@@ -915,6 +990,7 @@
 
       function logout() {
         if (confirm("Are you sure you want to logout?")) {
+          localStorage.removeItem("accessToken");
           window.location.href = "/";
         }
       }
