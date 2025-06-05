@@ -563,6 +563,8 @@
             <h3>50 Tokens</h3>
             <p style="font-size: 1.5rem; color: #4caf50; margin: 10px 0">
               $17.99
+
+
             </p>
             <p style="color: #888">$0.36 each</p>
           </div>
@@ -571,6 +573,17 @@
             <p style="font-size: 1.5rem; color: #4caf50; margin: 10px 0">
               $29.99
             </p>
+
+
+            </p>
+            <p style="color: #888">$0.36 each</p>
+          </div>
+          <div class="token-package" onclick="selectPackage(100, 29.99)">
+            <h3>100 Tokens</h3>
+            <p style="font-size: 1.5rem; color: #4caf50; margin: 10px 0">
+              $29.99
+            </p>
+
             <p style="color: #888">$0.30 each</p>
           </div>
         </div>
@@ -611,6 +624,13 @@
         const token = localStorage.getItem("accessToken");
         const sessionId = urlParams.get("session_id");
         const paymentStatus = urlParams.get("payment");
+
+
+        const token = localStorage.getItem("accessToken");
+
+        const sessionId = urlParams.get("session_id");
+        const paymentStatus = urlParams.get("payment");
+
 
         if (!email || !token) {
           window.location.href = "/";
