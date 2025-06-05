@@ -32,7 +32,7 @@ const stripeClient = stripe(process.env.STRIPE_SECRET_KEY)
 
 const SESSION_EXPIRY_HOURS = 24
 
-=======
+
 
 const SESSION_EXPIRY_HOURS = 24
 
